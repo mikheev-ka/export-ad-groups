@@ -9,7 +9,7 @@ class ADExportApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Экспорт пользователей из AD группы")
-        self.root.geometry("750x600")
+        self.root.geometry("750x650")  # немного увеличил высоту
         self.root.resizable(False, False)
 
         # Настройка стиля
@@ -27,6 +27,7 @@ class ADExportApp:
         self.recursive_var = tk.BooleanVar(value=True)
         self.append_var = tk.BooleanVar(value=False)
         self.encoding_var = tk.StringVar(value="UTF8")
+        self.delimiter_var = tk.StringVar(value=";")  # разделитель CSV
 
         self.create_widgets()
         self.root.bind('<Return>', lambda event: self.export())
@@ -63,20 +64,27 @@ class ADExportApp:
         browse_btn = ttk.Button(file_frame, text="Обзор...", command=self.browse_file)
         browse_btn.pack(side=tk.RIGHT)
 
-        # Опции (чекбоксы и выбор кодировки)
+        # Опции (чекбоксы и выбор кодировки/разделителя)
         options_frame = ttk.LabelFrame(input_frame, text="Параметры экспорта", padding="10")
         options_frame.grid(row=4, column=0, sticky='ew', pady=(10, 0))
 
+        # Чекбоксы
         ttk.Checkbutton(options_frame, text="Рекурсивно (включая вложенные группы)",
                         variable=self.recursive_var).grid(row=0, column=0, sticky='w', padx=5)
         ttk.Checkbutton(options_frame, text="Добавлять в конец файла (append)",
                         variable=self.append_var).grid(row=1, column=0, sticky='w', padx=5)
 
+        # Кодировка и разделитель
         ttk.Label(options_frame, text="Кодировка CSV:").grid(row=0, column=1, sticky='w', padx=(20, 5))
         encoding_combo = ttk.Combobox(options_frame, textvariable=self.encoding_var,
                                        values=["UTF8", "UTF8BOM", "ASCII", "Unicode"],
                                        state="readonly", width=10)
         encoding_combo.grid(row=0, column=2, sticky='w')
+
+        ttk.Label(options_frame, text="Разделитель CSV:").grid(row=1, column=1, sticky='w', padx=(20, 5))
+        delimiter_combo = ttk.Combobox(options_frame, textvariable=self.delimiter_var,
+                                       values=[",", ";", "\t"], state="readonly", width=5)
+        delimiter_combo.grid(row=1, column=2, sticky='w')
 
         # Кнопки
         button_frame = ttk.Frame(main_frame)
@@ -148,6 +156,7 @@ class ADExportApp:
         self.recursive_var.set(True)
         self.append_var.set(False)
         self.encoding_var.set("UTF8")
+        self.delimiter_var.set(";")
         self.result_text.delete(1.0, tk.END)
         self.root.focus_set()
 
@@ -206,30 +215,31 @@ class ADExportApp:
         recursive = self.recursive_var.get()
         append = self.append_var.get()
         encoding = self.encoding_var.get()
+        delimiter = self.delimiter_var.get()
 
         # Экранируем имя группы
         group_escaped = group.replace("'", "''")
         recursive_flag = "-Recursive" if recursive else ""
-        append_flag = f"-Append:${str(append).lower()}"
+        append_flag = "-Append" if append else ""
 
-        # Формируем PowerShell команду с добавлением поля Company (Организация)
+        # Формируем PowerShell команду
         ps_command = (
             f"Get-ADGroupMember -Identity '{group_escaped}' {recursive_flag} | "
             "ForEach-Object { "
             "    Get-ADUser -Filter {SamAccountName -eq $_.SamAccountName} -Properties Name, Mail, Enabled, Company "
             "} | "
             "Select-Object SamAccountName, Name, Mail, Enabled, Company | "
-            f"Export-Csv -Path '{file_path}' -Encoding {encoding} -NoTypeInformation "
+            f"Export-Csv -Path '{file_path}' -Encoding {encoding} -NoTypeInformation -Delimiter '{delimiter}' "
             f"{append_flag}"
         )
 
         # Выполняем
         success, error = self.run_powershell(ps_command)
 
-        # Обновляем интерфейс в главном потоке, передаём кодировку
-        self.root.after(0, self._export_callback, success, error, file_path, append, encoding)
+        # Обновляем интерфейс в главном потоке
+        self.root.after(0, self._export_callback, success, error, file_path, append, encoding, delimiter)
 
-    def _export_callback(self, success, error, file_path, append, encoding):
+    def _export_callback(self, success, error, file_path, append, encoding, delimiter):
         """Обработка результата экспорта в главном потоке."""
         if not success:
             self.result_text.delete(1.0, tk.END)
@@ -267,8 +277,9 @@ class ADExportApp:
             group=self.group_var.get(),
             file_path=file_path,
             recursive=self.recursive_var.get(),
-            append=self.append_var.get(),
+            append=append,
             encoding=encoding,
+            delimiter=delimiter,
             total_records=total_lines - 1 if total_lines > 0 else 0,
             preview=preview_lines
         )
@@ -287,7 +298,7 @@ class ADExportApp:
         else:
             return 'utf-8'
 
-    def _format_report(self, group, file_path, recursive, append, encoding, total_records, preview):
+    def _format_report(self, group, file_path, recursive, append, encoding, delimiter, total_records, preview):
         """Формирует текст для отображения в текстовом поле."""
         lines = []
         lines.append("=" * 60)
@@ -298,15 +309,14 @@ class ADExportApp:
         lines.append(f"Рекурсивно: {'Да' if recursive else 'Нет'}")
         lines.append(f"Добавление в файл: {'Да' if append else 'Нет'}")
         lines.append(f"Кодировка: {encoding}")
+        lines.append(f"Разделитель CSV: '{delimiter}'")
         lines.append(f"Всего записей (пользователей): {total_records}")
         lines.append("")
 
         if preview:
             lines.append("Предварительный просмотр (первые строки файла):")
             lines.append("-" * 60)
-            # Добавляем номера строк
             for idx, line in enumerate(preview, 1):
-                # Обрезаем длинные строки для удобства
                 display_line = line.strip()
                 if len(display_line) > 100:
                     display_line = display_line[:100] + "..."
