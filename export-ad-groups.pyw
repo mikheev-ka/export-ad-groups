@@ -212,13 +212,13 @@ class ADExportApp:
         recursive_flag = "-Recursive" if recursive else ""
         append_flag = f"-Append:${str(append).lower()}"
 
-        # Формируем PowerShell команду с добавлением поля Enabled
+        # Формируем PowerShell команду с добавлением поля Company (Организация)
         ps_command = (
             f"Get-ADGroupMember -Identity '{group_escaped}' {recursive_flag} | "
             "ForEach-Object { "
-            "    Get-ADUser -Filter {SamAccountName -eq $_.SamAccountName} -Properties Name, Mail, Enabled "
+            "    Get-ADUser -Filter {SamAccountName -eq $_.SamAccountName} -Properties Name, Mail, Enabled, Company "
             "} | "
-            "Select-Object SamAccountName, Name, Mail, Enabled | "
+            "Select-Object SamAccountName, Name, Mail, Enabled, Company | "
             f"Export-Csv -Path '{file_path}' -Encoding {encoding} -NoTypeInformation "
             f"{append_flag}"
         )
@@ -249,6 +249,7 @@ class ADExportApp:
 
         # Читаем первые строки для предварительного просмотра
         preview_lines = []
+        total_lines = 0
         try:
             with open(file_path, 'r', encoding=read_encoding) as f:
                 # Пропускаем пустые строки в начале
@@ -319,6 +320,7 @@ class ADExportApp:
         lines.append("  • ФИО (Name)")
         lines.append("  • Email (Mail)")
         lines.append("  • Состояние (Enabled) – True = включена, False = отключена")
+        lines.append("  • Организация (Company)")
 
         return "\n".join(lines)
 
